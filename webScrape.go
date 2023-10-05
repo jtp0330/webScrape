@@ -1,12 +1,15 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/gocolly/colly"
+	_ "github.com/lib/pq"
 )
 
 type PokemonProduct struct {
@@ -72,6 +75,61 @@ func toCsv(pokemonproducts []PokemonProduct) {
 	defer csv_writer.Flush()
 }
 
+func connectToDB() *sql.DB {
+	//var db_pwd string
+	fmt.Println("Starting DB Connection...")
+	//fmt.Println("Enter database password: ")
+	//fmt.Scan(&db_pwd)
+	//connStr := fmt.Sprintf("postgres://postgres:%s@localhost/pokemon_data", db_pwd)
+	connStr := "postgres://postgres:p0kem0n@localhost/pokemon_data?sslmode=disable"
+
+	db, err := sql.Open("postgres", connStr)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if err = db.Ping(); err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Successfully connected to database: Pokemon_data")
+
+	return db
+}
+
+// meant to be called while a connection is established
+// stores data entry into database
+func storeScrapedPokemonData(db *sql.DB, entry PokemonProduct) {
+
+	pk_price, _ := strconv.ParseFloat(entry.price[2:], 64)
+	var pkid = 0
+
+	//calculate new pkid based on latest entry from database or set to 0
+	var rowCount int
+	err := db.QueryRow(`SELECT COUNT(*) FROM pokemon_entries`).Scan(&rowCount)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if rowCount > 0 {
+		getLatestPkid := `SELECT pkid FROM pokemon_entries order by pkid desc limit 1`
+		get_err := db.QueryRow(getLatestPkid).Scan(&pkid)
+
+		if get_err != nil {
+			panic(get_err)
+		}
+	}
+
+	insertQuery := `INSERT INTO "pokemon_entries"("pkid","pk_name","pk_price","pk_url") VALUES($1,$2,$3,$4)`
+	_, insert_err := db.Exec(insertQuery, pkid+1, entry.name, pk_price, entry.url)
+
+	if insert_err != nil {
+		panic(insert_err)
+	}
+}
+
 func main() {
 
 	fmt.Println("Starting webscrape...")
@@ -114,7 +172,15 @@ func main() {
 
 		pkproducts = append(pkproducts, pkproduct)
 		//store in csv
-		toCsv(pkproducts)
+		//toCsv(pkproducts)
+
+		db := connectToDB()
+		//store data in pokemon_data table in PokemonDB Database
+		fmt.Println("Inserting Data into Database: Pokemon_data")
+		for _, pkproduct := range pkproducts {
+			storeScrapedPokemonData(db, pkproduct)
+		}
+		db.Close()
 	})
 	collector.OnScraped(func(r *colly.Response) {
 		fmt.Println(r.Request.URL, " scraped!")
