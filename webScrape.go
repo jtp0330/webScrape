@@ -2,14 +2,13 @@ package main
 
 import (
 	"database/sql"
-	"encoding/csv"
 	"fmt"
 	"log"
-	"os"
 	"strconv"
 
 	"github.com/gocolly/colly"
 	_ "github.com/lib/pq"
+	"golang.org/x/exp/slices"
 )
 
 type PokemonProduct struct {
@@ -29,59 +28,13 @@ func initWebscraper() *colly.Collector {
 	return scraper
 }
 
-func toCsv(pokemonproducts []PokemonProduct) {
-
-	var csv_name string
-	//takes valid csv file name
-	for {
-		fmt.Print("Please enter a name for the csv file\n")
-		_, err := fmt.Scanln(&csv_name)
-		if err != nil {
-			fmt.Print("Invalid Name or already used.\n Please Enter a different Name: ", err)
-		} else {
-			break
-		}
-	}
-	//creates a new csv file
-	csv_file, err := os.Create(fmt.Sprintf("%s.csv", csv_name))
-
-	if err != nil {
-		log.Fatalln("Pokemon.csv could not be created", err)
-	}
-	defer csv_file.Close()
-
-	csv_writer := csv.NewWriter(csv_file)
-
-	//define header fields
-	headers := []string{
-		"url",
-		"image",
-		"name",
-		"price",
-	}
-
-	csv_writer.Write(headers)
-	//add webscraped values to csv
-	for _, pokemon := range pokemonproducts {
-		record := []string{
-			pokemon.url,
-			pokemon.image,
-			pokemon.name,
-			pokemon.price,
-		}
-
-		csv_writer.Write(record)
-	}
-	defer csv_writer.Flush()
-}
-
-func connectToDB() *sql.DB {
+func connectToDB(dBname *string) *sql.DB {
 	//var db_pwd string
 	fmt.Println("Starting DB Connection...")
 	//fmt.Println("Enter database password: ")
 	//fmt.Scan(&db_pwd)
 	//connStr := fmt.Sprintf("postgres://postgres:%s@localhost/pokemon_data", db_pwd)
-	connStr := "postgres://postgres:p0kem0n@localhost/pokemon_data?sslmode=disable"
+	connStr := fmt.Sprintf("postgres://postgres:p0kem0n@localhost/%s?sslmode=disable", *dBname)
 
 	db, err := sql.Open("postgres", connStr)
 
@@ -132,19 +85,33 @@ func storeScrapedPokemonData(db *sql.DB, entry PokemonProduct) {
 
 func main() {
 
+	//enter a url for webscraping
+	var url, db_name string
+	var err error
+	var db *sql.DB
+	var page_numbers []string
+	var pages_visited []string
+
 	fmt.Println("Starting webscrape...")
 	collector := initWebscraper()
-
-	var pkproducts []PokemonProduct
-	//enter a url for webscraping
-	var url string
-	var err error
 
 	for {
 		fmt.Print("Please enter a url to scrape\n")
 		_, err = fmt.Scanln(&url)
 		if err != nil {
 			fmt.Print("Invalid type, Try again: ", err)
+		} else {
+			break
+		}
+	}
+	//add current webpage to web crawl slice
+	pages_visited = append(pages_visited, url)
+
+	for {
+		fmt.Print("Please enter a Postgres Database Stored Locally\n")
+		_, err = fmt.Scanln(&db_name)
+		if err != nil {
+			fmt.Print("Invalid type , Try again: ", err)
 		} else {
 			break
 		}
@@ -161,6 +128,17 @@ func main() {
 
 	collector.OnResponse(func(r *colly.Response) {
 		fmt.Println("Successful visit to {}", url)
+		db = connectToDB(&db_name)
+	})
+	//crawl additional webpages if not visited
+	collector.OnHTML("a.page-numbers", func(e *colly.HTMLElement) {
+
+		page_number := e.Attr("href")
+
+		if !slices.Contains(pages_visited, page_number) {
+			page_numbers = append(page_numbers, page_number)
+		}
+
 	})
 	collector.OnHTML("li.product", func(e *colly.HTMLElement) {
 
@@ -170,22 +148,77 @@ func main() {
 		pkproduct.name = e.ChildText("h2")
 		pkproduct.price = e.ChildText(".price")
 
-		pkproducts = append(pkproducts, pkproduct)
-		//store in csv
-		//toCsv(pkproducts)
-
-		db := connectToDB()
-		//store data in pokemon_data table in PokemonDB Database
 		fmt.Println("Inserting Data into Database: Pokemon_data")
-		for _, pkproduct := range pkproducts {
-			storeScrapedPokemonData(db, pkproduct)
-		}
-		db.Close()
+
+		storeScrapedPokemonData(db, pkproduct)
+
 	})
 	collector.OnScraped(func(r *colly.Response) {
 		fmt.Println(r.Request.URL, " scraped!")
+
+		fmt.Println("Checking for additional webpages...")
+
+		if len(page_numbers) <= 0 {
+			fmt.Println("All avaliable webpages scraped!")
+			fmt.Println("Closing DB connection...")
+			db.Close()
+			fmt.Println("Ending WebScraping...")
+		} else {
+			page_numbers = page_numbers[1:]
+			url = page_numbers[0]
+			pages_visited = append(pages_visited, url)
+
+			collector.Visit(url)
+		}
 	})
-	//challenge, incorporate a db microservice to store these tag information in a database
+	//visit url specified by user
 	collector.Visit(url)
 
 }
+
+/**********************Unused Functions*******************/
+// func toCsv(pokemonproducts []PokemonProduct) {
+
+// 	var csv_name string
+// 	//takes valid csv file name
+// 	for {
+// 		fmt.Print("Please enter a name for the csv file\n")
+// 		_, err := fmt.Scanln(&csv_name)
+// 		if err != nil {
+// 			fmt.Print("Invalid Name or already used.\n Please Enter a different Name: ", err)
+// 		} else {
+// 			break
+// 		}
+// 	}
+// 	//creates a new csv file
+// 	csv_file, err := os.Create(fmt.Sprintf("%s.csv", csv_name))
+
+// 	if err != nil {
+// 		log.Fatalln("Pokemon.csv could not be created", err)
+// 	}
+// 	defer csv_file.Close()
+
+// 	csv_writer := csv.NewWriter(csv_file)
+
+// 	//define header fields
+// 	headers := []string{
+// 		"url",
+// 		"image",
+// 		"name",
+// 		"price",
+// 	}
+
+// 	csv_writer.Write(headers)
+// 	//add webscraped values to csv
+// 	for _, pokemon := range pokemonproducts {
+// 		record := []string{
+// 			pokemon.url,
+// 			pokemon.image,
+// 			pokemon.name,
+// 			pokemon.price,
+// 		}
+
+// 		csv_writer.Write(record)
+// 	}
+// 	defer csv_writer.Flush()
+// }
