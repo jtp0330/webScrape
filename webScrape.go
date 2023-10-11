@@ -53,21 +53,22 @@ func connectToDB(dBname *string) *sql.DB {
 
 // meant to be called while a connection is established
 // stores data entry into database
-func storeScrapedPokemonData(db *sql.DB, entry PokemonProduct) {
+func storeScrapedPokemonData(db *sql.DB, tableName string, entry PokemonProduct) {
 
 	pk_price, _ := strconv.ParseFloat(entry.price[2:], 64)
 	var pkid = 0
 
 	//calculate new pkid based on latest entry from database or set to 0
 	var rowCount int
-	err := db.QueryRow(`SELECT COUNT(*) FROM pokemon_entries`).Scan(&rowCount)
+
+	err := db.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tableName)).Scan(&rowCount)
 
 	if err != nil {
 		panic(err)
 	}
 
 	if rowCount > 0 {
-		getLatestPkid := `SELECT pkid FROM pokemon_entries order by pkid desc limit 1`
+		getLatestPkid := fmt.Sprintf(`SELECT pkid FROM %s order by pkid desc limit 1`, tableName)
 		get_err := db.QueryRow(getLatestPkid).Scan(&pkid)
 
 		if get_err != nil {
@@ -86,7 +87,7 @@ func storeScrapedPokemonData(db *sql.DB, entry PokemonProduct) {
 func main() {
 
 	//enter a url for webscraping
-	var url, db_name string
+	var url, db_name, table_name string
 	var err error
 	var db *sql.DB
 	var page_numbers []string
@@ -110,6 +111,16 @@ func main() {
 	for {
 		fmt.Print("Please enter a Postgres Database Stored Locally\n")
 		_, err = fmt.Scanln(&db_name)
+		if err != nil {
+			fmt.Print("Invalid type , Try again: ", err)
+		} else {
+			break
+		}
+	}
+
+	for {
+		fmt.Print("Please enter a Table of that Database\n")
+		_, err = fmt.Scanln(&table_name)
 		if err != nil {
 			fmt.Print("Invalid type , Try again: ", err)
 		} else {
@@ -150,7 +161,7 @@ func main() {
 
 		fmt.Println("Inserting Data into Database: Pokemon_data")
 
-		storeScrapedPokemonData(db, pkproduct)
+		storeScrapedPokemonData(db, table_name, pkproduct)
 
 	})
 	collector.OnScraped(func(r *colly.Response) {
